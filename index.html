@@ -217,15 +217,6 @@
     font-size:0.85rem;
   }
 
-  .estat{
-    font-size:0.85rem;
-    text-align:center;
-    margin-top:6px;
-    min-height:18px;
-  }
-  .ok{color:var(--verd);}
-  .err{color:var(--roig);}
-
   .fila-botons-inline{
     display:flex;
     gap:8px;
@@ -254,6 +245,13 @@
   .modal p{font-size:0.9rem; color:#333; margin-bottom:16px;}
   .modal .fila-botons{display:flex; gap:10px;}
   .modal .fila-botons .btn{margin-bottom:0;}
+
+  .modal-icona{
+    font-size:2.2rem;
+    margin-bottom:8px;
+  }
+  .modal-ok p{color:var(--verd); font-weight:600;}
+  .modal-err p{color:var(--roig); font-weight:600;}
 </style>
 </head>
 <body>
@@ -309,7 +307,6 @@
     <button type="button" class="btn btn-importar" onclick="document.getElementById('inputFitxerJSON').click()">📥 Importar JSON d'usuaris</button>
     <input type="file" id="inputFitxerJSON" accept="application/json,.json" onchange="gestionarFitxerImportat(event)">
     <button type="button" class="btn btn-reiniciar" onclick="reiniciarDia()">🗑️ Esborrar assistència d'este viatge</button>
-    <div class="estat" id="estatEnviament"></div>
   </div>
 
 </div>
@@ -325,6 +322,14 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="modalAvis">
+  <div class="modal" id="modalAvisContingut">
+    <div class="modal-icona" id="modalAvisIcona">✅</div>
+    <p id="textModalAvis">Missatge</p>
+    <button type="button" class="btn btn-afegir" onclick="tancarModalAvis()">D'acord</button>
+  </div>
+</div>
+
 <script>
 window.onerror = function(msg, url, line){
   try{
@@ -333,6 +338,20 @@ window.onerror = function(msg, url, line){
   }catch(e){}
   return false;
 };
+
+function mostrarAvis(missatge, tipus){
+  var textEl = document.getElementById('textModalAvis');
+  var iconaEl = document.getElementById('modalAvisIcona');
+  var contingutEl = document.getElementById('modalAvisContingut');
+  textEl.textContent = missatge;
+  contingutEl.className = 'modal ' + (tipus === 'err' ? 'modal-err' : 'modal-ok');
+  iconaEl.textContent = (tipus === 'err') ? '⚠️' : '✅';
+  document.getElementById('modalAvis').classList.add('actiu');
+}
+
+function tancarModalAvis(){
+  document.getElementById('modalAvis').classList.remove('actiu');
+}
 
 // Llista d'usuaris buida per defecte. Importa el fitxer usuaris_autobus.json
 // amb el botó "Importar JSON d'usuaris" per carregar el llistat real al mòbil.
@@ -536,9 +555,8 @@ function guardarAssistenciaDia(){
   totes[clau] = { data: dataSel, sentit: sentit, linia: linia, marcats: marcatsFinals };
   guardarAssistenciaGuardada(totes);
 
-  var estat = document.getElementById('estatEnviament');
-  estat.textContent = 'Assistència guardada: ' + marcatsFinals.length + ' usuaris (' + (sentit === 'anada' ? 'Anada' : 'Tornada') + ', ' + dataSel + ') ✓';
-  estat.className = 'estat ok';
+  var sentitText = sentit === 'anada' ? 'Anada' : 'Tornada';
+  mostrarAvis('Assistència guardada: ' + marcatsFinals.length + ' usuaris (' + sentitText + ', ' + dataSel + ')', 'ok');
 }
 
 function construirJSON(){
@@ -563,7 +581,6 @@ function construirJSON(){
 
 function gestionarFitxerImportat(event){
   var fitxer = event.target.files[0];
-  var estat = document.getElementById('estatEnviament');
   if (!fitxer) return;
 
   var lector = new FileReader();
@@ -572,16 +589,14 @@ function gestionarFitxerImportat(event){
     try{
       dades = JSON.parse(e.target.result);
     }catch(err){
-      estat.textContent = 'El fitxer no és un JSON vàlid.';
-      estat.className = 'estat err';
+      mostrarAvis('El fitxer no és un JSON vàlid.', 'err');
       event.target.value = '';
       return;
     }
 
     var llista = Array.isArray(dades) ? dades : (Array.isArray(dades.usuaris) ? dades.usuaris : null);
     if (!llista){
-      estat.textContent = 'El JSON no té el format esperat (s\'espera un array o la clau "usuaris").';
-      estat.className = 'estat err';
+      mostrarAvis('El JSON no té el format esperat (s\'espera un array o la clau "usuaris").', 'err');
       event.target.value = '';
       return;
     }
@@ -591,8 +606,7 @@ function gestionarFitxerImportat(event){
       if(llista[i] && typeof llista[i] === 'object' && llista[i].nom) valids.push(llista[i]);
     }
     if (valids.length === 0){
-      estat.textContent = 'No s\'ha trobat cap usuari vàlid al fitxer (falta el camp "nom").';
-      estat.className = 'estat err';
+      mostrarAvis('No s\'ha trobat cap usuari vàlid al fitxer (falta el camp "nom").', 'err');
       event.target.value = '';
       return;
     }
@@ -620,8 +634,6 @@ function gestionarFitxerImportat(event){
 }
 
 function confirmarImportacio(mode){
-  var estat = document.getElementById('estatEnviament');
-
   if (mode === 'reemplacar'){
     if (!confirm('Això substituirà tot el llistat d\'usuaris actual pel del fitxer. Continuar?')){
       return;
@@ -642,8 +654,7 @@ function confirmarImportacio(mode){
   pintarLlista();
   tancarModalImportacio();
 
-  estat.textContent = 'Llistat d\'usuaris actualitzat (' + (mode === 'reemplacar' ? 'reemplaçat' : 'fusionat') + '): ara hi ha ' + usuaris.length + ' usuaris ✓';
-  estat.className = 'estat ok';
+  mostrarAvis('Llistat d\'usuaris actualitzat (' + (mode === 'reemplacar' ? 'reemplaçat' : 'fusionat') + '): ara hi ha ' + usuaris.length + ' usuaris', 'ok');
   usuarisPendentsImport = [];
 }
 
@@ -653,11 +664,9 @@ function tancarModalImportacio(){
 
 function enviarCorreu(){
   var dades = construirJSON();
-  var estat = document.getElementById('estatEnviament');
 
   if (dades.total_usuaris === 0){
-    estat.textContent = 'No hi ha cap usuari marcat. Guarda l\'assistència primer.';
-    estat.className = 'estat err';
+    mostrarAvis('No hi ha cap usuari marcat. Guarda l\'assistència primer.', 'err');
     return;
   }
 
@@ -676,8 +685,7 @@ function enviarCorreu(){
 
   window.location.href = mailtoUrl;
 
-  estat.textContent = 'S\'obri l\'app de correu del mòbil...';
-  estat.className = 'estat ok';
+  mostrarAvis('S\'obri l\'app de correu del mòbil...', 'ok');
 }
 
 function reiniciarDia(){
@@ -690,8 +698,7 @@ function reiniciarDia(){
   delete totes[clau];
   guardarAssistenciaGuardada(totes);
   pintarLlista();
-  document.getElementById('estatEnviament').textContent = 'Assistència esborrada.';
-  document.getElementById('estatEnviament').className = 'estat';
+  mostrarAvis('Assistència esborrada.', 'ok');
 }
 
 inputData.addEventListener('change', pintarLlista);
