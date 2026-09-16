@@ -213,8 +213,9 @@
   .missatge-buit{
     padding:20px;
     text-align:center;
-    color:var(--roig);
-    font-size:0.85rem;
+    color:var(--gris-fosc);
+    font-size:0.9rem;
+    line-height:1.4;
   }
 
   .fila-botons-inline{
@@ -274,8 +275,17 @@
       <label id="labelTornada"><input type="radio" name="sentit" value="tornada" onchange="actualitzarSentitUI()"> Tornada</label>
     </div>
 
-    <label for="linia">Línia / trajecte (opcional)</label>
-    <input type="text" id="linia" placeholder="Ex: Línia 3, Gandia-Platja">
+    <label for="linia">Línia / trajecte</label>
+    <select id="linia" onchange="canviLinia()">
+      <option value="">SELECCIONAR RUTA</option>
+      <option value="4606212|Rotova">RUTA 4606212 Rotova</option>
+      <option value="4605218|POTRIES-LA FONT">RUTA 4605218 POTRIES-LA FONT</option>
+      <option value="4606212|ADOR">RUTA 4606212 ADOR</option>
+      <option value="4605218|POTRIES-BENIFLÀ-BENIARJÓ-LA FONT">RUTA 4605218 POTRIES-BENIFLÀ-BENIARJÓ-LA FONT</option>
+      <option value="4606212|PALMA DE GANDIA">RUTA 4606212 PALMA DE GANDIA</option>
+      <option value="4605218|BENIFLÀ-BENIARJÓ">RUTA 4605218 BENIFLÀ-BENIARJÓ</option>
+      <option value="4606212|ALFAUIR-ALMISERÀ-LLOCNOU">RUTA 4606212 ALFAUIR-ALMISERÀ-LLOCNOU</option>
+    </select>
 
     <label for="cerca">Cercar alumne</label>
     <input type="text" id="cerca" placeholder="Escriu un cognom o nom...">
@@ -297,7 +307,7 @@
       <span class="comptador-total" id="comptadorTotal">0 / 0</span>
     </div>
     <div class="llista-usuaris" id="llistaUsuaris">
-      <div class="missatge-buit">No hi ha usuaris carregats. Importa el fitxer JSON d'usuaris amb el botó de baix.</div>
+      <div class="missatge-buit">Selecciona una ruta per a veure els usuaris.</div>
     </div>
     <button type="button" class="btn btn-afegir" style="margin-top:14px;" onclick="guardarAssistenciaDia()">💾 Guardar assistència</button>
   </div>
@@ -353,12 +363,9 @@ function tancarModalAvis(){
   document.getElementById('modalAvis').classList.remove('actiu');
 }
 
-// Llista d'usuaris buida per defecte. Importa el fitxer usuaris_autobus.json
-// amb el botó "Importar JSON d'usuaris" per carregar el llistat real al mòbil.
-var USUARIS_PER_DEFECTE = [];
-
-var usuaris = USUARIS_PER_DEFECTE.slice();
+var usuaris = [];
 var usuarisPendentsImport = [];
+var rutaPendentalmport = "";
 var memoriaAssistencia = {};
 var storageDisponible = true;
 
@@ -431,19 +438,33 @@ function guardarAssistenciaGuardada(totes){
   try{ localStorage.setItem('assistenciaAutobus', JSON.stringify(totes)); }catch(e){ memoriaAssistencia = totes; }
 }
 
+function canviLinia(){
+  omplirFiltrePoblacio();
+  pintarLlista();
+}
+
 function omplirFiltrePoblacio(){
-  var select = document.getElementById('filtrePoblacio');
+  var selectLinia = document.getElementById('linia').value;
+  var selectPoblacio = document.getElementById('filtrePoblacio');
+
+  if (!selectLinia) {
+    selectPoblacio.innerHTML = '<option value="">Totes les poblacions</option>';
+    return;
+  }
+
   var poblacions = [];
-  for(var i=0;i<usuaris.length;i++){
-    var p = usuaris[i].poblacio;
-    if(poblacions.indexOf(p) === -1) poblacions.push(p);
+  for(var i=0; i<usuaris.length; i++){
+    if (usuaris[i].ruta_key && usuaris[i].ruta_key.toUpperCase() === selectLinia.toUpperCase()) {
+      var p = usuaris[i].poblacio;
+      if(poblacions.indexOf(p) === -1) poblacions.push(p);
+    }
   }
   poblacions.sort();
   var html = '<option value="">Totes les poblacions</option>';
-  for(var j=0;j<poblacions.length;j++){
+  for(var j=0; j<poblacions.length; j++){
     html += '<option value="' + poblacions[j] + '">' + poblacions[j] + '</option>';
   }
-  select.innerHTML = html;
+  selectPoblacio.innerHTML = html;
 }
 
 function marcatsActuals(){
@@ -456,9 +477,23 @@ function marcatsActuals(){
 
 function pintarLlista(){
   var contenidor = document.getElementById('llistaUsuaris');
+  var selectLinia = document.getElementById('linia').value;
 
-  if(!usuaris || usuaris.length === 0){
-    contenidor.innerHTML = '<div class="missatge-buit">No hi ha usuaris carregats. Importa el fitxer JSON d\'usuaris amb el botó de baix.</div>';
+  if (!selectLinia) {
+    contenidor.innerHTML = '<div class="missatge-buit">Selecciona una ruta per a veure els usuaris.</div>';
+    document.getElementById('comptadorTotal').textContent = '0 / 0';
+    return;
+  }
+
+  var usuarisRuta = [];
+  for(var i=0; i<usuaris.length; i++){
+    if(usuaris[i].ruta_key && usuaris[i].ruta_key.toUpperCase() === selectLinia.toUpperCase()){
+      usuarisRuta.push(usuaris[i]);
+    }
+  }
+
+  if(usuarisRuta.length === 0){
+    contenidor.innerHTML = '<div class="missatge-buit">No hi ha usuaris carregats per a aquesta ruta. Importa el JSON corresponent.</div>';
     document.getElementById('comptadorTotal').textContent = '0 / 0';
     return;
   }
@@ -468,8 +503,8 @@ function pintarLlista(){
   var marcats = marcatsActuals();
 
   var filtrats = [];
-  for(var i=0;i<usuaris.length;i++){
-    var u = usuaris[i];
+  for(var k=0; k<usuarisRuta.length; k++){
+    var u = usuarisRuta[k];
     var coincideixCerca = !textCerca || u.nom.toLowerCase().indexOf(textCerca) !== -1;
     var coincideixPoblacio = !poblacioFiltre || u.poblacio === poblacioFiltre;
     if(coincideixCerca && coincideixPoblacio) filtrats.push(u);
@@ -477,25 +512,25 @@ function pintarLlista(){
 
   if(filtrats.length === 0){
     contenidor.innerHTML = '<div class="missatge-buit">Cap alumne coincideix amb la cerca/filtre.</div>';
-    document.getElementById('comptadorTotal').textContent = '0 / ' + usuaris.length;
+    document.getElementById('comptadorTotal').textContent = '0 / ' + usuarisRuta.length;
     return;
   }
 
   var agrupats = {};
   var ordrePoblacions = [];
-  for(var k=0;k<filtrats.length;k++){
-    var uu = filtrats[k];
+  for(var l=0; l<filtrats.length; l++){
+    var uu = filtrats[l];
     if(!agrupats[uu.poblacio]){ agrupats[uu.poblacio] = []; ordrePoblacions.push(uu.poblacio); }
     agrupats[uu.poblacio].push(uu);
   }
   ordrePoblacions.sort();
 
   var htmlFinal = '';
-  for(var m=0;m<ordrePoblacions.length;m++){
+  for(var m=0; m<ordrePoblacions.length; m++){
     var poblacio = ordrePoblacions[m];
     htmlFinal += '<div class="grup-poblacio">' + poblacio + '</div>';
     var llistaPoblacio = agrupats[poblacio];
-    for(var n=0;n<llistaPoblacio.length;n++){
+    for(var n=0; n<llistaPoblacio.length; n++){
       var usr = llistaPoblacio[n];
       var marcat = marcats.indexOf(usr.id) !== -1;
       htmlFinal += '<div class="fila-usuari">' +
@@ -513,28 +548,43 @@ function pintarLlista(){
 }
 
 function actualitzarComptador(){
+  var selectLinia = document.getElementById('linia').value;
+  var totalRuta = 0;
+  for(var j=0; j<usuaris.length; j++){
+    if(usuaris[j].ruta_key && usuaris[j].ruta_key.toUpperCase() === selectLinia.toUpperCase()){
+      totalRuta++;
+    }
+  }
+
   var caselles = document.querySelectorAll('.fila-usuari input[type="checkbox"]');
   var totalMarcats = 0;
-  for(var i=0;i<caselles.length;i++){ if(caselles[i].checked) totalMarcats++; }
-  document.getElementById('comptadorTotal').textContent = totalMarcats + ' / ' + usuaris.length;
+  for(var i=0; i<caselles.length; i++){ if(caselles[i].checked) totalMarcats++; }
+  document.getElementById('comptadorTotal').textContent = totalMarcats + ' / ' + totalRuta;
 }
 
 function marcarTots(valor){
   var caselles = document.querySelectorAll('.fila-usuari input[type="checkbox"]');
-  for(var i=0;i<caselles.length;i++){ caselles[i].checked = valor; }
+  for(var i=0; i<caselles.length; i++){ caselles[i].checked = valor; }
   actualitzarComptador();
 }
 
 function guardarAssistenciaDia(){
   var dataSel = inputData.value;
   var sentit = sentitSeleccionat();
-  var linia = document.getElementById('linia').value.trim();
+  var selectLinia = document.getElementById('linia');
+  
+  if(!selectLinia.value){
+    mostrarAvis('Selecciona una ruta abans de guardar.', 'err');
+    return;
+  }
+
+  var liniaText = selectLinia.options[selectLinia.selectedIndex].text;
   var clau = clauRegistre(dataSel, sentit);
 
   var caselles = document.querySelectorAll('.fila-usuari input[type="checkbox"]');
   var marcatsIds = [];
   var idsVisibles = [];
-  for(var i=0;i<caselles.length;i++){
+  for(var i=0; i<caselles.length; i++){
     idsVisibles.push(Number(caselles[i].dataset.id));
     if(caselles[i].checked) marcatsIds.push(Number(caselles[i].dataset.id));
   }
@@ -542,17 +592,17 @@ function guardarAssistenciaDia(){
   var totesAbans = carregarAssistenciaGuardada();
   var marcatsPrevis = (totesAbans[clau] && totesAbans[clau].marcats) ? totesAbans[clau].marcats : [];
   var marcatsNoVisibles = [];
-  for(var j=0;j<marcatsPrevis.length;j++){
+  for(var j=0; j<marcatsPrevis.length; j++){
     if(idsVisibles.indexOf(marcatsPrevis[j]) === -1) marcatsNoVisibles.push(marcatsPrevis[j]);
   }
   var combinats = marcatsIds.concat(marcatsNoVisibles);
   var marcatsFinals = [];
-  for(var k=0;k<combinats.length;k++){
+  for(var k=0; k<combinats.length; k++){
     if(marcatsFinals.indexOf(combinats[k]) === -1) marcatsFinals.push(combinats[k]);
   }
 
   var totes = carregarAssistenciaGuardada();
-  totes[clau] = { data: dataSel, sentit: sentit, linia: linia, marcats: marcatsFinals };
+  totes[clau] = { data: dataSel, sentit: sentit, linia: liniaText, marcats: marcatsFinals };
   guardarAssistenciaGuardada(totes);
 
   var sentitText = sentit === 'anada' ? 'Anada' : 'Tornada';
@@ -566,7 +616,7 @@ function construirJSON(){
   var totes = carregarAssistenciaGuardada();
   var registre = totes[clau] || { linia: '', marcats: [] };
   var usuarisMarcats = [];
-  for(var i=0;i<usuaris.length;i++){
+  for(var i=0; i<usuaris.length; i++){
     if(registre.marcats.indexOf(usuaris[i].id) !== -1) usuarisMarcats.push(usuaris[i]);
   }
 
@@ -594,6 +644,44 @@ function gestionarFitxerImportat(event){
       return;
     }
 
+    var jsonRouteId = null;
+    var jsonRouteNom = null;
+    
+    if (dades.rutes) {
+      jsonRouteId = dades.rutes.id;
+      jsonRouteNom = dades.rutes.nom;
+    } else if (dades.ruta) {
+      jsonRouteId = dades.ruta.id;
+      jsonRouteNom = dades.ruta.nom;
+    }
+
+    if (!jsonRouteId || !jsonRouteNom) {
+      mostrarAvis('El fitxer JSON no té les dades necessàries per validar la ruta (falta ID o nom).', 'err');
+      event.target.value = '';
+      return;
+    }
+
+    var rutaClauFitxer = String(jsonRouteId).trim() + '|' + String(jsonRouteNom).trim();
+    var selectLinia = document.getElementById('linia');
+    var selectedValue = selectLinia.value;
+
+    if (selectedValue !== "") {
+      if (selectedValue.toUpperCase() !== rutaClauFitxer.toUpperCase()) {
+        mostrarAvis('La ruta seleccionada no coincideix. El fitxer conté: ' + jsonRouteId + ' - ' + jsonRouteNom, 'err');
+        event.target.value = '';
+        return;
+      }
+    } else {
+      for (var idx = 0; idx < selectLinia.options.length; idx++) {
+        if (selectLinia.options[idx].value.toUpperCase() === rutaClauFitxer.toUpperCase()) {
+          selectLinia.value = selectLinia.options[idx].value;
+          break;
+        }
+      }
+    }
+
+    rutaPendentalmport = selectLinia.value || rutaClauFitxer;
+
     var llista = Array.isArray(dades) ? dades : (Array.isArray(dades.usuaris) ? dades.usuaris : null);
     if (!llista){
       mostrarAvis('El JSON no té el format esperat (s\'espera un array o la clau "usuaris").', 'err');
@@ -602,7 +690,7 @@ function gestionarFitxerImportat(event){
     }
 
     var valids = [];
-    for(var i=0;i<llista.length;i++){
+    for(var i=0; i<llista.length; i++){
       if(llista[i] && typeof llista[i] === 'object' && llista[i].nom) valids.push(llista[i]);
     }
     if (valids.length === 0){
@@ -612,20 +700,21 @@ function gestionarFitxerImportat(event){
     }
 
     var maxId = 0;
-    for(var j=0;j<usuaris.length;j++){ if((usuaris[j].id||0) > maxId) maxId = usuaris[j].id; }
+    for(var j=0; j<usuaris.length; j++){ if((usuaris[j].id||0) > maxId) maxId = usuaris[j].id; }
     usuarisPendentsImport = [];
-    for(var k=0;k<valids.length;k++){
+    for(var k=0; k<valids.length; k++){
       maxId++;
       usuarisPendentsImport.push({
         id: valids[k].id || maxId,
         nom: valids[k].nom,
         curs: valids[k].curs || '',
-        poblacio: valids[k].poblacio || 'SENSE POBLACIÓ'
+        poblacio: valids[k].poblacio || 'SENSE POBLACIÓ',
+        ruta_key: rutaPendentalmport
       });
     }
 
     document.getElementById('textModalImportacio').innerHTML =
-      'S\'han trobat <b>' + usuarisPendentsImport.length + '</b> usuaris al fitxer. Com vols importar-los?';
+      'S\'han trobat <b>' + usuarisPendentsImport.length + '</b> usuaris al fitxer per a la ruta.<br>Com vols importar-los?';
     document.getElementById('modalImportacio').classList.add('actiu');
 
     event.target.value = '';
@@ -635,27 +724,37 @@ function gestionarFitxerImportat(event){
 
 function confirmarImportacio(mode){
   if (mode === 'reemplacar'){
-    if (!confirm('Això substituirà tot el llistat d\'usuaris actual pel del fitxer. Continuar?')){
+    if (!confirm('Això substituirà els usuaris d\'aquesta ruta pels del fitxer. Continuar?')){
       return;
     }
-    usuaris = usuarisPendentsImport.slice();
+    usuaris = usuaris.filter(function(u){
+      return !u.ruta_key || u.ruta_key.toUpperCase() !== rutaPendentalmport.toUpperCase();
+    });
+    usuaris = usuaris.concat(usuarisPendentsImport);
   } else {
     var nomsExistents = [];
-    for(var i=0;i<usuaris.length;i++){ nomsExistents.push(usuaris[i].nom.trim().toUpperCase()); }
+    for(var i=0; i<usuaris.length; i++){
+      if(usuaris[i].ruta_key && usuaris[i].ruta_key.toUpperCase() === rutaPendentalmport.toUpperCase()){
+        nomsExistents.push(usuaris[i].nom.trim().toUpperCase());
+      }
+    }
     var nous = [];
-    for(var j=0;j<usuarisPendentsImport.length;j++){
+    for(var j=0; j<usuarisPendentsImport.length; j++){
       if(nomsExistents.indexOf(usuarisPendentsImport[j].nom.trim().toUpperCase()) === -1) nous.push(usuarisPendentsImport[j]);
     }
     usuaris = usuaris.concat(nous);
   }
+
+  document.getElementById('linia').value = rutaPendentalmport;
 
   guardarUsuarisLocalment();
   omplirFiltrePoblacio();
   pintarLlista();
   tancarModalImportacio();
 
-  mostrarAvis('Llistat d\'usuaris actualitzat (' + (mode === 'reemplacar' ? 'reemplaçat' : 'fusionat') + '): ara hi ha ' + usuaris.length + ' usuaris', 'ok');
+  mostrarAvis('Llistat d\'usuaris actualitzat per a la ruta seleccionada.', 'ok');
   usuarisPendentsImport = [];
+  rutaPendentalmport = "";
 }
 
 function tancarModalImportacio(){
