@@ -151,7 +151,7 @@
 
   .resum-top{
     display:flex;
-    justify-content:space-between;
+    justify-space-between;
     align-items:center;
     margin-bottom:10px;
   }
@@ -400,7 +400,8 @@ var inputData = document.getElementById('data');
 inputData.value = new Date().toISOString().slice(0,10);
 
 function clauRegistre(data, sentit){
-  return data + '_' + sentit;
+  var selectLinia = document.getElementById('linia').value;
+  return data + '_' + sentit + '_' + selectLinia;
 }
 
 function sentitSeleccionat(){
@@ -612,12 +613,17 @@ function guardarAssistenciaDia(){
 function construirJSON(){
   var dataSel = inputData.value;
   var sentit = sentitSeleccionat();
+  var selectLinia = document.getElementById('linia').value;
   var clau = clauRegistre(dataSel, sentit);
   var totes = carregarAssistenciaGuardada();
   var registre = totes[clau] || { linia: '', marcats: [] };
   var usuarisMarcats = [];
+
   for(var i=0; i<usuaris.length; i++){
-    if(registre.marcats.indexOf(usuaris[i].id) !== -1) usuarisMarcats.push(usuaris[i]);
+    var u = usuaris[i];
+    if(u.ruta_key && u.ruta_key.toUpperCase() === selectLinia.toUpperCase() && registre.marcats.indexOf(u.id) !== -1){
+      usuarisMarcats.push(u);
+    }
   }
 
   return {
@@ -705,7 +711,7 @@ function gestionarFitxerImportat(event){
     for(var k=0; k<valids.length; k++){
       maxId++;
       usuarisPendentsImport.push({
-        id: valids[k].id || maxId,
+        id: maxId,
         nom: valids[k].nom,
         curs: valids[k].curs || '',
         poblacio: valids[k].poblacio || 'SENSE POBLACIÓ',
