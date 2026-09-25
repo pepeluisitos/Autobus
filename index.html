@@ -393,7 +393,7 @@ input[type=file]{
     <input type="text" id="cerca" placeholder="Escriu un cognom o nom...">
 
     <label for="filtrePoblacio">Filtrar per població</label>
-    <select id="filtrePoblacio">
+    <select id="filtrePoblacio" onchange="pintarLlista()">
       <option value="">Totes les poblacions</option>
     </select>
 
@@ -485,25 +485,6 @@ input[type=file]{
   </div>
 </div>
 
-<div class="modal-overlay" id="modalEnviament">
-  <div class="modal">
-    <div class="modal-icona">📧</div>
-    <p id="textModalEnviament"></p>
-
-    <button type="button" class="btn btn-enviar" onclick="copiarIObrirCorreu()">
-      📋 Copiar JSON i obrir el correu
-    </button>
-
-    <button type="button" class="btn btn-compartir" onclick="tancarModalEnviament();compartirFitxerJSON()">
-      📎 Compartir o descarregar fitxer JSON
-    </button>
-
-    <button type="button" class="btn" style="background:#999;margin-bottom:0" onclick="tancarModalEnviament()">
-      Cancel·lar
-    </button>
-  </div>
-</div>
-
 <div class="modal-overlay" id="modalAvis">
   <div class="modal" id="modalAvisContingut">
     <div class="modal-icona" id="modalAvisIcona">✅</div>
@@ -526,14 +507,6 @@ input[type=file]{
  * ============================================================ */
 var CORREU_DESTI='46021319.secretaria@edu.gva.es';
 
-/*
- * Longitud màxima de l'enllaç mailto: que s'obri directament.
- * En Windows/Outlook els enllaços de més de ~2000 caràcters es
- * tallen o no s'obrin; als mòbils el límit és molt més alt.
- */
-var LIMIT_MAILTO_ESCRIPTORI=1900;
-var LIMIT_MAILTO_MOBIL=16000;
-
 /* ============================================================
  * ESTAT
  * ============================================================ */
@@ -543,7 +516,6 @@ var rutaPendentImport='';
 var memoriaAssistencia={};
 var storageDisponible=true;
 var temporitzadorToast=null;
-var enviamentPendent=null;
 
 var inputData=document.getElementById('data');
 var dataAutomatica='';
@@ -652,13 +624,6 @@ function dataValida(s){
 
 function nomSentit(s){
   return s==='tornada'?'Tornada':'Anada';
-}
-
-function esDispositiuMobil(){
-  var ua=navigator.userAgent||'';
-
-  return /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ||
-    (navigator.maxTouchPoints>1 && /Macintosh/.test(ua));
 }
 
 /* ============================================================
@@ -1071,14 +1036,23 @@ function marcarTots(valor){
 /* ============================================================
  * JSON I ENVIAMENT
  * ============================================================ */
+
+/*
+ * construirJSON(): genera el JSON dels alumnes pujats, filtrat per
+ * ruta, data i sentit (anada/tornada) seleccionats actualment, I TAMBÉ
+ * per la població seleccionada en «Filtrar per població» quan n'hi ha
+ * una activa (si el filtre és "Totes les poblacions", no es restringeix).
+ */
 function construirJSON(){
   var d=inputData.value;
   var s=sentitSeleccionat();
   var v=document.getElementById('linia').value;
+  var pf=document.getElementById('filtrePoblacio').value;
   var ids=marcatsActuals();
 
   var arr=usuarisDeRuta(v).filter(function(u){
-    return ids.indexOf(Number(u.id))>=0;
+    return ids.indexOf(Number(u.id))>=0 &&
+      (!pf || poblacioDe(u)===pf);
   });
 
   arr.sort(function(a,b){
@@ -1090,6 +1064,7 @@ function construirJSON(){
     data:d,
     sentit:s,
     linia:v,
+    poblacio:pf||'Totes',
     total_usuaris:arr.length,
     usuaris_pujats:arr.map(function(u){
       return{
@@ -1101,39 +1076,29 @@ function construirJSON(){
   };
 }
 
-/*
- * JSON vàlid amb un alumne per línia: igual de fàcil de processar
- * però molt més curt que JSON.stringify(d,null,2), cosa important
- * perquè el text viatja dins de l'enllaç mailto:.
- */
-function jsonPerCorreu(d){
-  var linies=d.usuaris_pujats.map(function(u){
-    return '  '+JSON.stringify(u);
-  });
-
-  return '{\r\n'+
-    '"data":'+JSON.stringify(d.data)+',\r\n'+
-    '"sentit":'+JSON.stringify(d.sentit)+',\r\n'+
-    '"linia":'+JSON.stringify(d.linia)+',\r\n'+
-    '"total_usuaris":'+d.total_usuaris+',\r\n'+
-    '"usuaris_pujats":['+
-      (linies.length?'\r\n'+linies.join(',\r\n')+'\r\n':'')+
-    ']\r\n}';
-}
-
 function textAssumpte(d){
-  return 'Control autobús ruta '+d.linia+' - '+d.data+' ('+nomSentit(d.sentit)+')';
+  var base='Control autobús ruta '+d.linia+' - '+d.data+' ('+nomSentit(d.sentit)+')';
+
+  return (d.poblacio && d.poblacio!=='Totes')
+    ?base+' - '+d.poblacio
+    :base;
 }
 
-/* Salts de línia CRLF, tal com demana l'estàndard mailto (RFC 6068) */
 function capcaleraCorreu(d){
-  return [
+  var linies=[
     'Control diari d\'usuaris de l\'autobús',
     'Data: '+d.data,
     'Sentit: '+nomSentit(d.sentit),
-    'Número de ruta: '+d.linia,
-    'Total usuaris: '+d.total_usuaris
-  ].join('\r\n');
+    'Número de ruta: '+d.linia
+  ];
+
+  if(d.poblacio && d.poblacio!=='Totes'){
+    linies.push('Població: '+d.poblacio);
+  }
+
+  linies.push('Total usuaris: '+d.total_usuaris);
+
+  return linies.join('\n');
 }
 
 function construirMailto(assumpte,cos){
@@ -1166,13 +1131,24 @@ function prepararEnviament(){
   var d=construirJSON();
 
   if(!d.total_usuaris){
-    mostrarAvis('No hi ha cap usuari marcat per enviar.','err');
+    mostrarAvis(
+      d.poblacio && d.poblacio!=='Totes'
+        ?'No hi ha cap usuari marcat per a la població «'+d.poblacio+'».'
+        :'No hi ha cap usuari marcat per enviar.',
+      'err'
+    );
     return null;
   }
 
   return d;
 }
 
+/*
+ * enviarCorreu(): insereix directament el JSON complet (indentat,
+ * filtrat per ruta+sentit+data+població) dins del cos del correu.
+ * NO es comprova la longitud de l'enllaç mailto: s'envia sempre
+ * directament, siga quina siga la mida de la llista.
+ */
 function enviarCorreu(){
   var d=prepararEnviament();
 
@@ -1181,59 +1157,10 @@ function enviarCorreu(){
   }
 
   var cos=capcaleraCorreu(d)+
-    '\r\n\r\n--- JSON ---\r\n'+
-    jsonPerCorreu(d);
+    '\n\n--- JSON ---\n'+
+    JSON.stringify(d,null,2);
 
-  var url=construirMailto(textAssumpte(d),cos);
-
-  var limit=esDispositiuMobil()
-    ?LIMIT_MAILTO_MOBIL
-    :LIMIT_MAILTO_ESCRIPTORI;
-
-  if(url.length<=limit){
-    obrirMailto(url);
-    return;
-  }
-
-  /* Massa llarg: el correu s'obriria tallat o no s'obriria */
-  enviamentPendent=d;
-
-  document.getElementById('textModalEnviament').textContent=
-    'La llista ('+d.total_usuaris+' usuaris) és massa llarga per a '+
-    'posar-la directament en el correu. Tria com vols enviar-la:';
-
-  document.getElementById('modalEnviament').classList.add('actiu');
-}
-
-function tancarModalEnviament(){
-  document.getElementById('modalEnviament').classList.remove('actiu');
-}
-
-function copiarIObrirCorreu(){
-  var d=enviamentPendent;
-
-  tancarModalEnviament();
-  enviamentPendent=null;
-
-  if(!d){
-    return;
-  }
-
-  copiarText(JSON.stringify(d,null,2)).then(function(ok){
-    if(!ok){
-      mostrarAvis(
-        'No s\'ha pogut copiar el JSON. Usa «Compartir o descarregar fitxer JSON».',
-        'err'
-      );
-      return;
-    }
-
-    var cos=capcaleraCorreu(d)+
-      '\r\n\r\n--- JSON ---\r\n'+
-      '(El JSON està copiat: mantén premut ací i tria «Enganxa»)';
-
-    obrirMailto(construirMailto(textAssumpte(d),cos));
-  });
+  obrirMailto(construirMailto(textAssumpte(d),cos));
 }
 
 function copiarText(text){
@@ -1297,6 +1224,8 @@ function descarregarFitxer(nom,contingut){
 /*
  * Envia el JSON com a fitxer adjunt: amb el menú de compartir del mòbil
  * quan el navegador ho permet, i si no, el descarrega.
+ * El fitxer respecta el mateix filtre de població que s'estiga
+ * aplicant en eixe moment (o tots si no n'hi ha cap seleccionat).
  */
 function compartirFitxerJSON(){
   var d=prepararEnviament();
@@ -1305,8 +1234,12 @@ function compartirFitxerJSON(){
     return;
   }
 
+  var sufixPoblacio=(d.poblacio && d.poblacio!=='Totes')
+    ?'_'+nomFitxerSegur(d.poblacio)
+    :'';
+
   var nom='control_autobus_ruta'+nomFitxerSegur(d.linia)+
-    '_'+d.data+'_'+d.sentit+'.json';
+    '_'+d.data+'_'+d.sentit+sufixPoblacio+'.json';
 
   var contingut=JSON.stringify(d,null,2);
   var fitxer=null;
