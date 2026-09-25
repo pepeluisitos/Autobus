@@ -12,6 +12,7 @@
   --verd:#2e7d32;
   --roig:#c62828;
   --taronja:#ef6c00;
+  --turquesa:#00897b;
   --gris:#f2f2f2;
   --gris-fosc:#555
 }
@@ -63,6 +64,22 @@ header p{
   text-align:center;
   border-bottom:1px solid #ffe08a;
   display:none
+}
+
+#toast{
+  position:fixed;
+  left:50%;
+  bottom:16px;
+  transform:translateX(-50%);
+  background:rgba(33,33,33,.92);
+  color:#fff;
+  font-size:.8rem;
+  padding:8px 14px;
+  border-radius:20px;
+  z-index:50;
+  display:none;
+  max-width:90%;
+  text-align:center
 }
 
 .container{
@@ -160,6 +177,10 @@ input[type=date]{
   background:var(--blau)
 }
 
+.btn-compartir{
+  background:var(--turquesa)
+}
+
 .btn-importar{
   background:var(--taronja)
 }
@@ -216,33 +237,43 @@ input[type=file]{
   z-index:1
 }
 
+/* Tota la fila és tocable (és un <label>), no sols la casella */
 .fila-usuari{
   display:flex;
   align-items:center;
   gap:10px;
   padding:10px;
-  border-bottom:1px solid #f0f0f0
+  margin:0;
+  border-bottom:1px solid #f0f0f0;
+  font-size:inherit;
+  font-weight:400;
+  color:inherit;
+  cursor:pointer
 }
 
 .fila-usuari input{
   width:24px;
   height:24px;
   flex-shrink:0;
+  margin:0;
   accent-color:var(--verd)
 }
 
 .info-usuari{
+  display:block;
   flex:1;
   min-width:0
 }
 
 .nom-usuari{
+  display:block;
   font-size:.92rem;
   font-weight:600;
   line-height:1.2
 }
 
 .detall-usuari{
+  display:block;
   font-size:.75rem;
   color:var(--gris-fosc)
 }
@@ -328,6 +359,7 @@ input[type=file]{
 </header>
 
 <div id="diagnostic"></div>
+<div id="toast"></div>
 
 <div class="container">
 
@@ -352,7 +384,7 @@ input[type=file]{
 
     <label for="linia">Número de ruta</label>
 
-    <!-- Este selector aparece vacío hasta importar un JSON -->
+    <!-- Es plena amb les rutes ja importades en este dispositiu -->
     <select id="linia" onchange="canviLinia()">
       <option value="">SELECCIONAR RUTA</option>
     </select>
@@ -394,6 +426,10 @@ input[type=file]{
 
     <button type="button" class="btn btn-enviar" onclick="enviarCorreu()">
       📧 Enviar per correu
+    </button>
+
+    <button type="button" class="btn btn-compartir" onclick="compartirFitxerJSON()">
+      📎 Compartir o descarregar fitxer JSON
     </button>
 
     <button type="button" class="btn btn-importar" onclick="document.getElementById('inputFitxerJSON').click()">
@@ -442,8 +478,27 @@ input[type=file]{
       type="button"
       class="btn"
       style="background:#999;margin-top:10px"
-      onclick="tancarModalImportacio()"
+      onclick="cancelarImportacio()"
     >
+      Cancel·lar
+    </button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalEnviament">
+  <div class="modal">
+    <div class="modal-icona">📧</div>
+    <p id="textModalEnviament"></p>
+
+    <button type="button" class="btn btn-enviar" onclick="copiarIObrirCorreu()">
+      📋 Copiar JSON i obrir el correu
+    </button>
+
+    <button type="button" class="btn btn-compartir" onclick="tancarModalEnviament();compartirFitxerJSON()">
+      📎 Compartir o descarregar fitxer JSON
+    </button>
+
+    <button type="button" class="btn" style="background:#999;margin-bottom:0" onclick="tancarModalEnviament()">
       Cancel·lar
     </button>
   </div>
@@ -466,17 +521,40 @@ input[type=file]{
 </div>
 
 <script>
+/* ============================================================
+ * CONFIGURACIÓ
+ * ============================================================ */
+var CORREU_DESTI='46021319.secretaria@edu.gva.es';
+
+/*
+ * Longitud màxima de l'enllaç mailto: que s'obri directament.
+ * En Windows/Outlook els enllaços de més de ~2000 caràcters es
+ * tallen o no s'obrin; als mòbils el límit és molt més alt.
+ */
+var LIMIT_MAILTO_ESCRIPTORI=1900;
+var LIMIT_MAILTO_MOBIL=16000;
+
+/* ============================================================
+ * ESTAT
+ * ============================================================ */
 var usuaris=[];
 var usuarisPendentsImport=[];
-var rutaPendentalmport='';
+var rutaPendentImport='';
 var memoriaAssistencia={};
 var storageDisponible=true;
+var temporitzadorToast=null;
+var enviamentPendent=null;
 
+var inputData=document.getElementById('data');
+var dataAutomatica='';
+
+/* ============================================================
+ * UTILITATS
+ * ============================================================ */
 function mostrarAvis(m,t){
   document.getElementById('textModalAvis').textContent=m;
 
   var c=document.getElementById('modalAvisContingut');
-
   c.className='modal '+(t==='err'?'modal-err':'modal-ok');
 
   document.getElementById('modalAvisIcona').textContent=
@@ -489,6 +567,103 @@ function tancarModalAvis(){
   document.getElementById('modalAvis').classList.remove('actiu');
 }
 
+/* Missatge breu que no tapa l'avís permanent d'emmagatzematge */
+function mostrarToast(text){
+  var t=document.getElementById('toast');
+  t.textContent=text;
+  t.style.display='block';
+
+  clearTimeout(temporitzadorToast);
+  temporitzadorToast=setTimeout(function(){
+    t.style.display='none';
+  },1500);
+}
+
+function avisEmmagatzematge(){
+  var dg=document.getElementById('diagnostic');
+  dg.textContent='Avís: este mòbil no permet guardar dades. '+
+    'Si tanques o recarregues la pàgina es perdrà la llista i l\'assistència.';
+  dg.style.display='block';
+}
+
+function escaparHTML(texto){
+  return String(texto)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#039;');
+}
+
+/* Minúscules i sense accents (per a cercar i comparar noms) */
+function normalitzarText(s){
+  s=String(s==null?'':s).toLowerCase();
+
+  if(s.normalize){
+    s=s.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  }
+
+  return s;
+}
+
+function clauNom(s){
+  return normalitzarText(s).replace(/\s+/g,' ').trim();
+}
+
+function poblacioDe(u){
+  return String(u.poblacio||u.poblacion||'').trim()||'SENSE POBLACIÓ';
+}
+
+function rutaDeUsuari(u){
+  return String(
+    u.ruta_key ||
+    u.ruta_id ||
+    u.ruta ||
+    ''
+  ).split('|')[0].trim();
+}
+
+function mateixaRuta(a,b){
+  return String(a).toUpperCase()===String(b).toUpperCase();
+}
+
+function usuarisDeRuta(ruta){
+  if(!ruta){
+    return [];
+  }
+
+  return usuaris.filter(function(u){
+    return mateixaRuta(rutaDeUsuari(u),ruta);
+  });
+}
+
+/* Data local (no UTC): evita que entre les 00:00 i les 02:00 isca el dia anterior */
+function dataISO(d){
+  function dd(n){
+    return (n<10?'0':'')+n;
+  }
+
+  return d.getFullYear()+'-'+dd(d.getMonth()+1)+'-'+dd(d.getDate());
+}
+
+function dataValida(s){
+  return /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+function nomSentit(s){
+  return s==='tornada'?'Tornada':'Anada';
+}
+
+function esDispositiuMobil(){
+  var ua=navigator.userAgent||'';
+
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ||
+    (navigator.maxTouchPoints>1 && /Macintosh/.test(ua));
+}
+
+/* ============================================================
+ * EMMAGATZEMATGE
+ * ============================================================ */
 function provarLocalStorage(){
   try{
     var k='__test_ls__';
@@ -500,40 +675,85 @@ function provarLocalStorage(){
   }
 }
 
-storageDisponible=provarLocalStorage();
+function guardarUsuarisLocalment(){
+  if(!storageDisponible){
+    return;
+  }
 
-if(storageDisponible){
   try{
-    var g=localStorage.getItem('usuarisAutobus');
+    localStorage.setItem('usuarisAutobus',JSON.stringify(usuaris));
+  }catch(e){
+    avisEmmagatzematge();
+  }
+}
 
-    if(g){
-      var p=JSON.parse(g);
+function carregarAssistenciaGuardada(){
+  if(!storageDisponible){
+    return memoriaAssistencia;
+  }
 
-      if(Array.isArray(p)){
-        usuaris=p;
-      }
+  try{
+    var t=JSON.parse(localStorage.getItem('assistenciaAutobus')||'{}');
+    return (t&&typeof t==='object'&&!Array.isArray(t))?t:{};
+  }catch(e){
+    return {};
+  }
+}
+
+function guardarAssistenciaGuardada(t){
+  memoriaAssistencia=t;
+
+  if(!storageDisponible){
+    return;
+  }
+
+  try{
+    localStorage.setItem('assistenciaAutobus',JSON.stringify(t));
+  }catch(e){
+    /* A partir d'ací es treballa en memòria perquè no es perda res */
+    storageDisponible=false;
+    avisEmmagatzematge();
+  }
+}
+
+/* Garanteix que cada usuari té un id numèric únic */
+function normalitzarIds(){
+  var vistos={};
+  var max=0;
+  var canvi=false;
+
+  usuaris=usuaris.filter(function(u){
+    return u&&typeof u==='object';
+  });
+
+  usuaris.forEach(function(u){
+    var n=Number(u.id);
+    if(n>0&&isFinite(n)){
+      max=Math.max(max,n);
     }
-  }catch(e){}
-}else{
-  var dg=document.getElementById('diagnostic');
+  });
 
-  dg.textContent='Avís: el mòbil bloqueja l\'emmagatzematge local.';
-  dg.style.display='block';
+  usuaris.forEach(function(u){
+    var n=Number(u.id);
+
+    if(!(n>0&&isFinite(n))||vistos[n]){
+      u.id=++max;
+      canvi=true;
+    }else{
+      u.id=n;
+    }
+
+    vistos[u.id]=true;
+  });
+
+  if(canvi){
+    guardarUsuarisLocalment();
+  }
 }
 
-var inputData=document.getElementById('data');
-
-inputData.value=new Date().toISOString().slice(0,10);
-
-function rutaDeUsuari(u){
-  return String(
-    u.ruta_key ||
-    u.ruta_id ||
-    u.ruta ||
-    ''
-  ).split('|')[0].trim();
-}
-
+/* ============================================================
+ * RUTA, SENTIT I REGISTRE
+ * ============================================================ */
 function clauRegistre(data,sentit){
   return data+'_'+sentit+'_'+document.getElementById('linia').value;
 }
@@ -562,44 +782,42 @@ function actualitzarSentitUI(){
   pintarLlista();
 }
 
-function guardarUsuarisLocalment(){
-  if(storageDisponible){
-    try{
-      localStorage.setItem(
-        'usuarisAutobus',
-        JSON.stringify(usuaris)
-      );
-    }catch(e){}
-  }
+function llistaRutes(){
+  var rutes=[];
+
+  usuaris.forEach(function(u){
+    var r=rutaDeUsuari(u);
+
+    if(r && !rutes.some(function(x){return mateixaRuta(x,r);})){
+      rutes.push(r);
+    }
+  });
+
+  rutes.sort(function(a,b){
+    return a.localeCompare(b,'ca',{numeric:true});
+  });
+
+  return rutes;
 }
 
-function carregarAssistenciaGuardada(){
-  if(!storageDisponible){
-    return memoriaAssistencia;
-  }
+function omplirSelectorRutes(seleccio){
+  var sel=document.getElementById('linia');
 
-  try{
-    return JSON.parse(
-      localStorage.getItem('assistenciaAutobus')||'{}'
-    );
-  }catch(e){
-    return memoriaAssistencia;
-  }
-}
+  sel.innerHTML=
+    '<option value="">SELECCIONAR RUTA</option>'+
+    llistaRutes().map(function(r){
+      return '<option value="'+escaparHTML(r)+'">'+escaparHTML(r)+'</option>';
+    }).join('');
 
-function guardarAssistenciaGuardada(t){
-  if(!storageDisponible){
-    memoriaAssistencia=t;
-    return;
-  }
+  sel.value='';
 
-  try{
-    localStorage.setItem(
-      'assistenciaAutobus',
-      JSON.stringify(t)
-    );
-  }catch(e){
-    memoriaAssistencia=t;
+  if(seleccio){
+    for(var i=0;i<sel.options.length;i++){
+      if(sel.options[i].value && mateixaRuta(sel.options[i].value,seleccio)){
+        sel.value=sel.options[i].value;
+        break;
+      }
+    }
   }
 }
 
@@ -611,62 +829,43 @@ function canviLinia(){
 function omplirFiltrePoblacio(){
   var rutaSeleccionada=document.getElementById('linia').value;
   var selector=document.getElementById('filtrePoblacio');
-
-  if(!rutaSeleccionada){
-    selector.innerHTML=
-      '<option value="">Totes les poblacions</option>';
-    return;
-  }
+  var anterior=selector.value;
 
   var poblacions=[];
 
-  usuaris.forEach(function(u){
-    if(
-      rutaDeUsuari(u).toUpperCase()===
-      rutaSeleccionada.toUpperCase()
-    ){
-      var poblacio=u.poblacio||'SENSE POBLACIÓ';
+  usuarisDeRuta(rutaSeleccionada).forEach(function(u){
+    var p=poblacioDe(u);
 
-      if(poblacions.indexOf(poblacio)<0){
-        poblacions.push(poblacio);
-      }
+    if(poblacions.indexOf(p)<0){
+      poblacions.push(p);
     }
   });
 
-  poblacions.sort();
+  poblacions.sort(function(a,b){
+    return a.localeCompare(b,'ca');
+  });
 
   selector.innerHTML=
     '<option value="">Totes les poblacions</option>'+
     poblacions.map(function(p){
-      return '<option value="'+escaparHTML(p)+'">'+
-        escaparHTML(p)+
-        '</option>';
+      return '<option value="'+escaparHTML(p)+'">'+escaparHTML(p)+'</option>';
     }).join('');
-}
 
-function escaparHTML(texto){
-  return String(texto)
-    .replace(/&/g,'&amp;')
-    .replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;')
-    .replace(/'/g,'&#039;');
+  selector.value=poblacions.indexOf(anterior)>=0?anterior:'';
 }
 
 function marcatsActuals(){
   var t=carregarAssistenciaGuardada();
-  var r=t[
-    clauRegistre(
-      inputData.value,
-      sentitSeleccionat()
-    )
-  ];
+  var r=t[clauRegistre(inputData.value,sentitSeleccionat())];
 
   return r&&Array.isArray(r.marcats)
-    ?r.marcats
+    ?r.marcats.map(Number)
     :[];
 }
 
+/* ============================================================
+ * LLISTA I COMPTADOR
+ * ============================================================ */
 function pintarLlista(){
   var c=document.getElementById('llistaUsuaris');
   var v=document.getElementById('linia').value;
@@ -674,36 +873,23 @@ function pintarLlista(){
   if(!v){
     c.innerHTML=
       '<div class="missatge-buit">'+
-      'Puja un JSON per a carregar una ruta i els seus usuaris.'+
+      (usuaris.length
+        ?'Selecciona una ruta o importa un JSON.'
+        :'Puja un JSON per a carregar una ruta i els seus usuaris.')+
       '</div>';
 
-    document.getElementById('comptadorTotal')
-      .textContent='0 / 0';
-
+    actualitzarComptador();
     return;
   }
 
-  var ruta=usuaris.filter(function(u){
-    return rutaDeUsuari(u).toUpperCase()===
-      v.toUpperCase();
-  });
-
-  var q=document.getElementById('cerca')
-    .value
-    .trim()
-    .toLowerCase();
-
+  var ruta=usuarisDeRuta(v);
+  var q=normalitzarText(document.getElementById('cerca').value.trim());
   var pf=document.getElementById('filtrePoblacio').value;
   var m=marcatsActuals();
 
   var f=ruta.filter(function(u){
-    return(
-      !q ||
-      String(u.nom||'').toLowerCase().indexOf(q)>=0
-    )&&(
-      !pf ||
-      u.poblacio===pf
-    );
+    return (!q || normalitzarText(u.nom).indexOf(q)>=0) &&
+      (!pf || poblacioDe(u)===pf);
   });
 
   if(!f.length){
@@ -712,83 +898,86 @@ function pintarLlista(){
       'Cap alumne coincideix amb la cerca/filtre.'+
       '</div>';
 
-    document.getElementById('comptadorTotal')
-      .textContent='0 / '+ruta.length;
-
+    actualitzarComptador();
     return;
   }
 
-  var agrupados={};
+  var agrupats={};
 
   f.forEach(function(u){
-    var poblacio=u.poblacio||'SENSE POBLACIÓ';
+    var p=poblacioDe(u);
 
-    if(!agrupados[poblacio]){
-      agrupados[poblacio]=[];
+    if(!agrupats[p]){
+      agrupats[p]=[];
     }
 
-    agrupados[poblacio].push(u);
+    agrupats[p].push(u);
   });
 
   var html='';
 
-  Object.keys(agrupados)
-    .sort()
+  Object.keys(agrupats)
+    .sort(function(a,b){return a.localeCompare(b,'ca');})
     .forEach(function(p){
-      html+='<div class="grup-poblacio">'+
-        escaparHTML(p)+
-        '</div>';
+      html+='<div class="grup-poblacio">'+escaparHTML(p)+'</div>';
 
-      agrupados[p].forEach(function(u){
-        html+=
-          '<div class="fila-usuari">'+
-            '<input type="checkbox" data-id="'+
-              Number(u.id)+
-              '" '+
-              (
-                m.indexOf(Number(u.id))>=0
-                ?'checked'
-                :''
-              )+
-              ' onchange="canviAssistenciaAutomatica(this)">'+
-            '<div class="info-usuari">'+
-              '<div class="nom-usuari">'+
-                escaparHTML(u.nom||'')+
-              '</div>'+
-              '<div class="detall-usuari">'+
-                escaparHTML(u.curs||'')+
-              '</div>'+
-            '</div>'+
-          '</div>';
-      });
+      agrupats[p]
+        .sort(function(a,b){
+          return String(a.nom||'').localeCompare(String(b.nom||''),'ca');
+        })
+        .forEach(function(u){
+          var id=Number(u.id);
+
+          html+=
+            '<label class="fila-usuari">'+
+              '<input type="checkbox" data-id="'+id+'" '+
+                (m.indexOf(id)>=0?'checked':'')+
+                ' onchange="canviAssistenciaAutomatica()">'+
+              '<span class="info-usuari">'+
+                '<span class="nom-usuari">'+escaparHTML(u.nom||'')+'</span>'+
+                '<span class="detall-usuari">'+escaparHTML(u.curs||'')+'</span>'+
+              '</span>'+
+            '</label>';
+        });
     });
 
   c.innerHTML=html;
   actualitzarComptador();
 }
 
+/*
+ * El comptador es calcula a partir del registre guardat,
+ * no de les caselles visibles: així és correcte encara que
+ * hi haja una cerca o un filtre de població actius.
+ */
 function actualitzarComptador(){
   var v=document.getElementById('linia').value;
+  var el=document.getElementById('comptadorTotal');
 
-  var total=usuaris.filter(function(u){
-    return rutaDeUsuari(u).toUpperCase()===
-      v.toUpperCase();
+  if(!v){
+    el.textContent='0 / 0';
+    return;
+  }
+
+  var ruta=usuarisDeRuta(v);
+  var m=marcatsActuals();
+
+  var n=ruta.filter(function(u){
+    return m.indexOf(Number(u.id))>=0;
   }).length;
 
-  var marcats=document.querySelectorAll(
-    '.fila-usuari input:checked'
-  ).length;
-
-  document.getElementById('comptadorTotal')
-    .textContent=marcats+' / '+total;
+  el.textContent=n+' / '+ruta.length;
 }
 
+/* ============================================================
+ * GUARDAR ASSISTÈNCIA
+ * ============================================================ */
 function guardarAssistenciaDia(){
   var selectorRuta=document.getElementById('linia');
   var d=inputData.value;
   var s=sentitSeleccionat();
 
-  if(!selectorRuta.value){
+  if(!selectorRuta.value || !dataValida(d)){
     return false;
   }
 
@@ -815,9 +1004,10 @@ function guardarAssistenciaDia(){
   });
 
   var anteriors=Array.isArray(registre.marcats)
-    ?registre.marcats
+    ?registre.marcats.map(Number)
     :[];
 
+  /* Es conserven els marcats que ara no es veuen per la cerca/filtre */
   var finals=anteriors.filter(function(id){
     return visibles.indexOf(id)<0;
   });
@@ -842,54 +1032,58 @@ function guardarAssistenciaDia(){
 }
 
 function canviAssistenciaAutomatica(){
-  guardarAssistenciaDia();
+  if(!guardarAssistenciaDia()){
+    mostrarToast('Indica una data vàlida per a guardar l\'assistència');
+    return;
+  }
 
   var d=construirJSON();
-
-  var diagnostic=document.getElementById('diagnostic');
-
-  diagnostic.textContent=
-    'Assistència guardada automàticament ('+
-    d.total_usuaris+
-    ' usuaris)';
-
-  diagnostic.style.display='block';
-
-  setTimeout(function(){
-    diagnostic.style.display='none';
-  },1200);
+  mostrarToast('Guardat: '+d.total_usuaris+' usuaris pujats');
 }
 
 function marcarTots(valor){
-  document.querySelectorAll(
-    '.fila-usuari input'
-  ).forEach(function(x){
+  if(!document.getElementById('linia').value){
+    mostrarAvis('No hi ha cap ruta seleccionada.','err');
+    return;
+  }
+
+  var caselles=document.querySelectorAll('.fila-usuari input');
+
+  if(!caselles.length){
+    return;
+  }
+
+  if(
+    !valor &&
+    document.querySelectorAll('.fila-usuari input:checked').length &&
+    !confirm('Segur que vols desmarcar tots els alumnes de la llista?')
+  ){
+    return;
+  }
+
+  [].forEach.call(caselles,function(x){
     x.checked=valor;
   });
 
-  guardarAssistenciaDia();
-  actualitzarComptador();
+  canviAssistenciaAutomatica();
 }
 
+/* ============================================================
+ * JSON I ENVIAMENT
+ * ============================================================ */
 function construirJSON(){
   var d=inputData.value;
   var s=sentitSeleccionat();
   var v=document.getElementById('linia').value;
-  var t=carregarAssistenciaGuardada();
+  var ids=marcatsActuals();
 
-  var r=t[clauRegistre(d,s)]||{
-    linia:v,
-    marcats:[]
-  };
+  var arr=usuarisDeRuta(v).filter(function(u){
+    return ids.indexOf(Number(u.id))>=0;
+  });
 
-  var ids=Array.isArray(r.marcats)
-    ?r.marcats
-    :[];
-
-  var arr=usuaris.filter(function(u){
-    return rutaDeUsuari(u).toUpperCase()===
-      v.toUpperCase() &&
-      ids.indexOf(Number(u.id))>=0;
+  arr.sort(function(a,b){
+    return poblacioDe(a).localeCompare(poblacioDe(b),'ca') ||
+      String(a.nom||'').localeCompare(String(b.nom||''),'ca');
   });
 
   return{
@@ -899,21 +1093,72 @@ function construirJSON(){
     total_usuaris:arr.length,
     usuaris_pujats:arr.map(function(u){
       return{
-        nom:u.nom,
-        curs:u.curs,
-        poblacio:u.poblacio
+        nom:u.nom||'',
+        curs:u.curs||'',
+        poblacio:poblacioDe(u)
       };
     })
   };
 }
 
-function enviarCorreu(){
+/*
+ * JSON vàlid amb un alumne per línia: igual de fàcil de processar
+ * però molt més curt que JSON.stringify(d,null,2), cosa important
+ * perquè el text viatja dins de l'enllaç mailto:.
+ */
+function jsonPerCorreu(d){
+  var linies=d.usuaris_pujats.map(function(u){
+    return '  '+JSON.stringify(u);
+  });
+
+  return '{\r\n'+
+    '"data":'+JSON.stringify(d.data)+',\r\n'+
+    '"sentit":'+JSON.stringify(d.sentit)+',\r\n'+
+    '"linia":'+JSON.stringify(d.linia)+',\r\n'+
+    '"total_usuaris":'+d.total_usuaris+',\r\n'+
+    '"usuaris_pujats":['+
+      (linies.length?'\r\n'+linies.join(',\r\n')+'\r\n':'')+
+    ']\r\n}';
+}
+
+function textAssumpte(d){
+  return 'Control autobús ruta '+d.linia+' - '+d.data+' ('+nomSentit(d.sentit)+')';
+}
+
+/* Salts de línia CRLF, tal com demana l'estàndard mailto (RFC 6068) */
+function capcaleraCorreu(d){
+  return [
+    'Control diari d\'usuaris de l\'autobús',
+    'Data: '+d.data,
+    'Sentit: '+nomSentit(d.sentit),
+    'Número de ruta: '+d.linia,
+    'Total usuaris: '+d.total_usuaris
+  ].join('\r\n');
+}
+
+function construirMailto(assumpte,cos){
+  return 'mailto:'+CORREU_DESTI+
+    '?subject='+encodeURIComponent(assumpte)+
+    '&body='+encodeURIComponent(cos);
+}
+
+function obrirMailto(url){
+  window.location.href=url;
+}
+
+/* Valida, guarda l'estat actual i torna les dades a enviar (o null) */
+function prepararEnviament(){
   if(!document.getElementById('linia').value){
     mostrarAvis(
-      'Primer has de pujar un JSON amb la informació de la ruta.',
+      'Primer has de seleccionar una ruta o importar un JSON amb la informació de la ruta.',
       'err'
     );
-    return;
+    return null;
+  }
+
+  if(!dataValida(inputData.value)){
+    mostrarAvis('Indica una data vàlida.','err');
+    return null;
   }
 
   guardarAssistenciaDia();
@@ -921,36 +1166,186 @@ function enviarCorreu(){
   var d=construirJSON();
 
   if(!d.total_usuaris){
-    mostrarAvis(
-      'No hi ha cap usuari marcat per enviar.',
-      'err'
-    );
+    mostrarAvis('No hi ha cap usuari marcat per enviar.','err');
+    return null;
+  }
+
+  return d;
+}
+
+function enviarCorreu(){
+  var d=prepararEnviament();
+
+  if(!d){
     return;
   }
 
-  var st=d.sentit==='anada'
-    ?'Anada'
-    :'Tornada';
+  var cos=capcaleraCorreu(d)+
+    '\r\n\r\n--- JSON ---\r\n'+
+    jsonPerCorreu(d);
 
-  var ass='Control autobús '+d.data+' ('+st+')';
+  var url=construirMailto(textAssumpte(d),cos);
 
-  var cos=
-    'Control diari d\'usuaris de l\'autobus\n'+
-    'Data: '+d.data+'\n'+
-    'Sentit: '+st+'\n'+
-    'Número de ruta: '+d.linia+'\n'+
-    'Total usuaris: '+d.total_usuaris+
-    '\n\n--- JSON ---\n'+
-    JSON.stringify(d,null,2);
+  var limit=esDispositiuMobil()
+    ?LIMIT_MAILTO_MOBIL
+    :LIMIT_MAILTO_ESCRIPTORI;
 
-  window.location.href=
-    'mailto:46021319.secretaria@edu.gva.es?subject='+
-    encodeURIComponent(ass)+
-    '&body='+
-    encodeURIComponent(cos);
+  if(url.length<=limit){
+    obrirMailto(url);
+    return;
+  }
+
+  /* Massa llarg: el correu s'obriria tallat o no s'obriria */
+  enviamentPendent=d;
+
+  document.getElementById('textModalEnviament').textContent=
+    'La llista ('+d.total_usuaris+' usuaris) és massa llarga per a '+
+    'posar-la directament en el correu. Tria com vols enviar-la:';
+
+  document.getElementById('modalEnviament').classList.add('actiu');
 }
 
-function extraureNumeroRuta(d){
+function tancarModalEnviament(){
+  document.getElementById('modalEnviament').classList.remove('actiu');
+}
+
+function copiarIObrirCorreu(){
+  var d=enviamentPendent;
+
+  tancarModalEnviament();
+  enviamentPendent=null;
+
+  if(!d){
+    return;
+  }
+
+  copiarText(JSON.stringify(d,null,2)).then(function(ok){
+    if(!ok){
+      mostrarAvis(
+        'No s\'ha pogut copiar el JSON. Usa «Compartir o descarregar fitxer JSON».',
+        'err'
+      );
+      return;
+    }
+
+    var cos=capcaleraCorreu(d)+
+      '\r\n\r\n--- JSON ---\r\n'+
+      '(El JSON està copiat: mantén premut ací i tria «Enganxa»)';
+
+    obrirMailto(construirMailto(textAssumpte(d),cos));
+  });
+}
+
+function copiarText(text){
+  if(navigator.clipboard && window.isSecureContext){
+    return navigator.clipboard.writeText(text).then(
+      function(){return true;},
+      function(){return copiarTextAntic(text);}
+    );
+  }
+
+  return Promise.resolve(copiarTextAntic(text));
+}
+
+function copiarTextAntic(text){
+  var ta=document.createElement('textarea');
+
+  ta.value=text;
+  ta.setAttribute('readonly','');
+  ta.style.position='fixed';
+  ta.style.top='-1000px';
+  ta.style.opacity='0';
+
+  document.body.appendChild(ta);
+  ta.select();
+
+  try{
+    ta.setSelectionRange(0,text.length);
+  }catch(e){}
+
+  var ok=false;
+
+  try{
+    ok=document.execCommand('copy');
+  }catch(e){}
+
+  document.body.removeChild(ta);
+
+  return ok;
+}
+
+function nomFitxerSegur(s){
+  return String(s).replace(/[^\w-]+/g,'_');
+}
+
+function descarregarFitxer(nom,contingut){
+  var blob=new Blob([contingut],{type:'application/json'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+
+  a.href=url;
+  a.download=nom;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  setTimeout(function(){
+    URL.revokeObjectURL(url);
+  },4000);
+}
+
+/*
+ * Envia el JSON com a fitxer adjunt: amb el menú de compartir del mòbil
+ * quan el navegador ho permet, i si no, el descarrega.
+ */
+function compartirFitxerJSON(){
+  var d=prepararEnviament();
+
+  if(!d){
+    return;
+  }
+
+  var nom='control_autobus_ruta'+nomFitxerSegur(d.linia)+
+    '_'+d.data+'_'+d.sentit+'.json';
+
+  var contingut=JSON.stringify(d,null,2);
+  var fitxer=null;
+
+  try{
+    fitxer=new File([contingut],nom,{type:'application/json'});
+  }catch(e){}
+
+  if(
+    fitxer &&
+    navigator.canShare &&
+    navigator.share &&
+    navigator.canShare({files:[fitxer]})
+  ){
+    navigator.share({
+      files:[fitxer],
+      title:textAssumpte(d),
+      text:textAssumpte(d)
+    }).catch(function(err){
+      if(!err || err.name!=='AbortError'){
+        descarregarFitxer(nom,contingut);
+      }
+    });
+    return;
+  }
+
+  descarregarFitxer(nom,contingut);
+
+  mostrarAvis(
+    'S\'ha descarregat el fitxer '+nom+
+    '. Adjunta\'l a un correu per a '+CORREU_DESTI+'.',
+    'ok'
+  );
+}
+
+/* ============================================================
+ * IMPORTACIÓ
+ * ============================================================ */
+function extraureNumeroRuta(d,llista){
   var numero='';
 
   if(d.numero_ruta){
@@ -963,12 +1358,7 @@ function extraureNumeroRuta(d){
 
   if(!numero && d.ruta){
     if(typeof d.ruta==='object'){
-      numero=String(
-        d.ruta.id||
-        d.ruta.numero||
-        d.ruta.numero_ruta||
-        ''
-      );
+      numero=String(d.ruta.id||d.ruta.numero||d.ruta.numero_ruta||'');
     }else{
       numero=String(d.ruta);
     }
@@ -976,14 +1366,21 @@ function extraureNumeroRuta(d){
 
   if(!numero && d.rutes){
     if(typeof d.rutes==='object'){
-      numero=String(
-        d.rutes.id||
-        d.rutes.numero||
-        d.rutes.numero_ruta||
-        ''
-      );
+      numero=String(d.rutes.id||d.rutes.numero||d.rutes.numero_ruta||'');
     }else{
       numero=String(d.rutes);
+    }
+  }
+
+  /* Si el JSON és només una llista, es mira la ruta dels usuaris */
+  if(!numero && Array.isArray(llista)){
+    for(var i=0;i<llista.length;i++){
+      if(llista[i] && typeof llista[i]==='object'){
+        numero=rutaDeUsuari(llista[i]);
+        if(numero){
+          break;
+        }
+      }
     }
   }
 
@@ -1020,277 +1417,276 @@ function gestionarFitxerImportat(e){
   var lector=new FileReader();
 
   lector.onload=function(x){
+    e.target.value='';
+
     var d;
 
     try{
       d=JSON.parse(x.target.result);
     }catch(err){
-      mostrarAvis(
-        'El fitxer no és un JSON vàlid.',
-        'err'
-      );
-
-      e.target.value='';
+      mostrarAvis('El fitxer no és un JSON vàlid.','err');
       return;
     }
 
-    var numeroRuta=extraureNumeroRuta(d);
+    if(!d || typeof d!=='object'){
+      mostrarAvis('El JSON no té el format esperat.','err');
+      return;
+    }
+
+    var llista=extraureLlistaUsuaris(d);
+
+    if(!llista){
+      mostrarAvis('El JSON no té el format esperat.','err');
+      return;
+    }
+
+    var numeroRuta=extraureNumeroRuta(d,llista);
 
     if(!numeroRuta){
-      mostrarAvis(
-        'El fitxer JSON no té el número de ruta.',
-        'err'
-      );
-
-      e.target.value='';
+      mostrarAvis('El fitxer JSON no té el número de ruta.','err');
       return;
     }
 
-    var lista=extraureLlistaUsuaris(d);
-
-    if(!lista){
-      mostrarAvis(
-        'El JSON no té el format esperat.',
-        'err'
-      );
-
-      e.target.value='';
-      return;
-    }
-
-    var selectorRuta=document.getElementById('linia');
-
-    /*
-     * Si ya hay una ruta seleccionada, se comprueba
-     * que el nuevo JSON corresponda a esa ruta.
-     */
-    if(
-      selectorRuta.value &&
-      selectorRuta.value.toUpperCase()!==
-      numeroRuta.toUpperCase()
-    ){
-      mostrarAvis(
-        'La ruta seleccionada no coincideix amb el JSON.',
-        'err'
-      );
-
-      e.target.value='';
-      return;
-    }
-
-    /*
-     * Si la ruta todavía no existe en el selector,
-     * se crea automáticamente.
-     */
-    var existe=false;
-
-    for(var i=0;i<selectorRuta.options.length;i++){
-      if(
-        selectorRuta.options[i].value.toUpperCase()===
-        numeroRuta.toUpperCase()
-      ){
-        selectorRuta.value=selectorRuta.options[i].value;
-        existe=true;
-        break;
-      }
-    }
-
-    if(!existe){
-      var nuevaOpcion=document.createElement('option');
-
-      nuevaOpcion.value=numeroRuta;
-      nuevaOpcion.textContent=numeroRuta;
-
-      selectorRuta.appendChild(nuevaOpcion);
-      selectorRuta.value=numeroRuta;
-    }
-
-    rutaPendentalmport=numeroRuta;
-
-    var validos=lista.filter(function(u){
-      return u&&
-        typeof u==='object'&&
-        (
-          u.nom||
-          u.nombre
-        );
-    });
-
-    var max=usuaris.reduce(function(n,u){
-      return Math.max(n,Number(u.id)||0);
-    },0);
-
-    usuarisPendentsImport=validos.map(function(u){
+    usuarisPendentsImport=llista.filter(function(u){
+      return u && typeof u==='object' && String(u.nom||u.nombre||'').trim();
+    }).map(function(u){
       return{
-        id:++max,
-        nom:u.nom||u.nombre||'',
-        curs:u.curs||u.curso||'',
-        poblacio:
-          u.poblacio||
-          u.poblacion||
-          'SENSE POBLACIÓ',
-        ruta_key:numeroRuta
+        nom:String(u.nom||u.nombre).trim(),
+        curs:String(u.curs||u.curso||'').trim(),
+        poblacio:String(u.poblacio||u.poblacion||'').trim()
       };
     });
 
     if(!usuarisPendentsImport.length){
-      mostrarAvis(
-        'No s\'ha trobat cap usuari vàlid.',
-        'err'
-      );
-
-      e.target.value='';
+      mostrarAvis('No s\'ha trobat cap usuari vàlid.','err');
       return;
     }
 
-    document.getElementById(
-      'textModalImportacio'
-    ).innerHTML=
-      'Ruta: <b>'+
-      escaparHTML(numeroRuta)+
-      '</b><br>'+
-      'S\'han trobat <b>'+
-      usuarisPendentsImport.length+
-      '</b> usuaris al fitxer.<br>'+
-      'Com vols importar-los?';
+    /* La ruta no es canvia fins que es confirma la importació */
+    rutaPendentImport=numeroRuta;
 
-    document.getElementById(
-      'modalImportacio'
-    ).classList.add('actiu');
+    var rutaActual=document.getElementById('linia').value;
+    var existents=usuarisDeRuta(numeroRuta).length;
 
+    document.getElementById('textModalImportacio').innerHTML=
+      'Ruta: <b>'+escaparHTML(numeroRuta)+'</b><br>'+
+      'S\'han trobat <b>'+usuarisPendentsImport.length+'</b> usuaris al fitxer.'+
+      (existents
+        ?'<br>Esta ruta ja té <b>'+existents+'</b> usuaris guardats.'
+        :'')+
+      (rutaActual && !mateixaRuta(rutaActual,numeroRuta)
+        ?'<br><br>Atenció: ara tens seleccionada la ruta <b>'+
+          escaparHTML(rutaActual)+'</b>. Es canviarà a la ruta del fitxer.'
+        :'')+
+      '<br><br>Com vols importar-los?';
+
+    document.getElementById('modalImportacio').classList.add('actiu');
+  };
+
+  lector.onerror=function(){
     e.target.value='';
+    mostrarAvis('No s\'ha pogut llegir el fitxer.','err');
   };
 
   lector.readAsText(f);
 }
 
 function confirmarImportacio(mode){
+  var ruta=rutaPendentImport;
+
+  if(!ruta || !usuarisPendentsImport.length){
+    cancelarImportacio();
+    return;
+  }
+
   if(
-    mode==='reemplacar'&&
-    !confirm(
-      'Això substituirà els usuaris d\'aquesta ruta. Continuar?'
-    )
+    mode==='reemplacar' &&
+    !confirm('Això substituirà els usuaris d\'esta ruta. Continuar?')
   ){
     return;
   }
 
+  /* Usuaris existents de la ruta, per nom (sense accents ni majúscules) */
+  var perNom={};
+
+  usuarisDeRuta(ruta).forEach(function(u){
+    var k=clauNom(u.nom);
+    if(!(k in perNom)){
+      perNom[k]=u;
+    }
+  });
+
+  var max=usuaris.reduce(function(n,u){
+    return Math.max(n,Number(u.id)||0);
+  },0);
+
+  var missatge;
+
   if(mode==='reemplacar'){
-    usuaris=usuaris.filter(function(u){
-      return rutaDeUsuari(u).toUpperCase()!==
-        rutaPendentalmport.toUpperCase();
-    }).concat(usuarisPendentsImport);
-  }else{
-    var noms=usuaris.filter(function(u){
-      return rutaDeUsuari(u).toUpperCase()===
-        rutaPendentalmport.toUpperCase();
-    }).map(function(u){
-      return String(u.nom)
-        .trim()
-        .toUpperCase();
+    /*
+     * Es reaprofita l'id dels alumnes que ja existien:
+     * així l'assistència ja marcada hui no es perd.
+     */
+    var usats={};
+
+    var nous=usuarisPendentsImport.map(function(p){
+      var ant=perNom[clauNom(p.nom)];
+      var id=(ant && !usats[ant.id])?Number(ant.id):++max;
+
+      usats[id]=true;
+
+      return{
+        id:id,
+        nom:p.nom,
+        curs:p.curs,
+        poblacio:p.poblacio||'SENSE POBLACIÓ',
+        ruta_key:ruta
+      };
     });
 
-    usuaris=usuaris.concat(
-      usuarisPendentsImport.filter(function(u){
-        return noms.indexOf(
-          String(u.nom)
-            .trim()
-            .toUpperCase()
-        )<0;
-      })
-    );
+    usuaris=usuaris.filter(function(u){
+      return !mateixaRuta(rutaDeUsuari(u),ruta);
+    }).concat(nous);
+
+    missatge='Ruta '+ruta+': llistat reemplaçat ('+nous.length+' usuaris).';
+  }else{
+    var afegits=0;
+    var actualitzats=0;
+
+    usuarisPendentsImport.forEach(function(p){
+      var k=clauNom(p.nom);
+      var ant=perNom[k];
+
+      if(ant){
+        if(p.curs){ ant.curs=p.curs; }
+        if(p.poblacio){ ant.poblacio=p.poblacio; }
+        actualitzats++;
+      }else{
+        var nou={
+          id:++max,
+          nom:p.nom,
+          curs:p.curs,
+          poblacio:p.poblacio||'SENSE POBLACIÓ',
+          ruta_key:ruta
+        };
+
+        usuaris.push(nou);
+        perNom[k]=nou;
+        afegits++;
+      }
+    });
+
+    missatge='Ruta '+ruta+': '+afegits+' usuaris nous, '+
+      actualitzats+' ja existien.';
   }
 
   guardarUsuarisLocalment();
 
-  document.getElementById('linia').value=
-    rutaPendentalmport;
-
+  omplirSelectorRutes(ruta);
+  document.getElementById('filtrePoblacio').value='';
   omplirFiltrePoblacio();
   pintarLlista();
 
-  tancarModalImportacio();
+  cancelarImportacio();
 
+  mostrarAvis(missatge,'ok');
+}
+
+function cancelarImportacio(){
+  document.getElementById('modalImportacio').classList.remove('actiu');
   usuarisPendentsImport=[];
-  rutaPendentalmport='';
-
-  mostrarAvis(
-    'Llistat actualitzat.',
-    'ok'
-  );
+  rutaPendentImport='';
 }
 
-function tancarModalImportacio(){
-  document.getElementById(
-    'modalImportacio'
-  ).classList.remove('actiu');
-}
-
+/* ============================================================
+ * ESBORRAR
+ * ============================================================ */
 function reiniciarDia(){
   if(!document.getElementById('linia').value){
-    mostrarAvis(
-      'No hi ha cap ruta carregada.',
-      'err'
-    );
+    mostrarAvis('No hi ha cap ruta seleccionada.','err');
     return;
   }
 
-  var s=sentitSeleccionat();
-
-  if(
-    !confirm(
-      'Segur que vols esborrar l\'assistència d\'este viatge?'
-    )
-  ){
+  if(!confirm('Segur que vols esborrar l\'assistència d\'este viatge?')){
     return;
   }
 
   var t=carregarAssistenciaGuardada();
 
-  delete t[
-    clauRegistre(
-      inputData.value,
-      s
-    )
-  ];
+  delete t[clauRegistre(inputData.value,sentitSeleccionat())];
 
   guardarAssistenciaGuardada(t);
   pintarLlista();
 
-  mostrarAvis(
-    'Assistència esborrada.',
-    'ok'
-  );
+  mostrarAvis('Assistència esborrada.','ok');
 }
 
-inputData.addEventListener(
-  'change',
-  pintarLlista
-);
+/* ============================================================
+ * DATA AUTOMÀTICA
+ * Si la pàgina es queda oberta d'un dia per a l'altre, la data
+ * s'actualitza sola (llevat que l'haja canviada l'usuari), per a
+ * no guardar ni enviar l'assistència amb la data d'ahir.
+ * ============================================================ */
+function comprovarCanviDia(){
+  var hui=dataISO(new Date());
 
-document.getElementById('cerca')
-  .addEventListener(
-    'input',
-    pintarLlista
-  );
+  if(hui!==dataAutomatica && inputData.value===dataAutomatica){
+    inputData.value=hui;
+    dataAutomatica=hui;
+    pintarLlista();
+    mostrarToast('Data actualitzada a hui ('+hui+')');
+  }
+}
 
-document.getElementById('filtrePoblacio')
-  .addEventListener(
-    'change',
-    pintarLlista
-  );
+/* ============================================================
+ * INICI
+ * ============================================================ */
+storageDisponible=provarLocalStorage();
+
+if(storageDisponible){
+  try{
+    var guardats=localStorage.getItem('usuarisAutobus');
+
+    if(guardats){
+      var p=JSON.parse(guardats);
+
+      if(Array.isArray(p)){
+        usuaris=p;
+      }
+    }
+  }catch(e){}
+}else{
+  avisEmmagatzematge();
+}
+
+normalitzarIds();
+
+inputData.value=dataISO(new Date());
+dataAutomatica=inputData.value;
+
+inputData.addEventListener('change',pintarLlista);
+document.getElementById('cerca').addEventListener('input',pintarLlista);
+document.getElementById('filtrePoblacio').addEventListener('change',pintarLlista);
+
+document.addEventListener('visibilitychange',function(){
+  if(!document.hidden){
+    comprovarCanviDia();
+  }
+});
+window.addEventListener('focus',comprovarCanviDia);
 
 /*
- * El selector de rutas comienza vacío.
- * No se cargan rutas guardadas de localStorage.
+ * Es recuperen les rutes ja importades en este dispositiu,
+ * així una recàrrega de la pàgina no obliga a tornar a importar.
+ * Si només n'hi ha una, se selecciona directament.
  */
-document.getElementById('linia').innerHTML=
-  '<option value="">SELECCIONAR RUTA</option>';
+(function(){
+  var rutes=llistaRutes();
+  omplirSelectorRutes(rutes.length===1?rutes[0]:'');
+})();
 
-document.getElementById('filtrePoblacio').innerHTML=
-  '<option value="">Totes les poblacions</option>';
-
+omplirFiltrePoblacio();
 actualitzarSentitUI();
-pintarLlista();
 </script>
 
 </body>
